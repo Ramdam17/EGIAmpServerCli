@@ -1,18 +1,20 @@
 # egi_amp_cli — Headless EGI → LSL streamer
 
-A minimal C++17 command‑line tool to read EEG from **EGI Net Amps (AmpServer)** and publish to **Lab Streaming Layer (LSL)** without any Qt dependency.
+A robust C++17 command‑line tool to read EEG from **EGI Net Amps (AmpServer)** and publish to **Lab Streaming Layer (LSL)** without any Qt dependency.
 
 ## Attribution
 
 This project is based on the [EGI AmpServer LSL App](https://github.com/labstreaminglayer/App-EGIAmpServer) from the Lab Streaming Layer project. The vast majority of the EGI protocol implementation and packet processing code originates from that project. This version removes the Qt GUI dependency and provides a command-line interface for headless operation.
 
 ## Features
-- Connects to AmpServer (command/notification/data sockets)
-- Auto‑detects packet format (1/2) and channel count via net code
-- Scales samples per amplifier type (NA300/400/410)
-- Pushes float32 EEG to LSL with configurable stream name, sampling rate, and chunk size
-- Config from XML (Boost.PropertyTree); CLI flags override config
-- Clean shutdown on SIGINT/SIGTERM
+- **Robust Connection Management**: Connects to AmpServer (command/notification/data sockets) with automatic reconnection
+- **Protocol Compliance**: Follows the exact initialization sequence from the original Qt GUI version
+- **Auto-Detection**: Auto‑detects packet format (1/2) and channel count via net code
+- **Multi-Amplifier Support**: Scales samples per amplifier type (NA300/400/410)
+- **LSL Integration**: Pushes float32 EEG to LSL with configurable stream name, sampling rate, and chunk size
+- **Flexible Configuration**: Config from XML (Boost.PropertyTree); CLI flags override config
+- **Production Ready**: Clean shutdown on SIGINT/SIGTERM with comprehensive error reporting
+- **Stream Recovery**: Automatic reconnection attempts (up to 5) when data streams are lost
 
 ## Build (CMake)
 Requirements: CMake ≥3.15, C++17, liblsl, Boost (≥1.69.0 - uses header-only components: asio, property_tree, endian)
@@ -68,7 +70,7 @@ All flags are optional if present in the config; CLI overrides XML.
 ```xml
 <root>
   <ampserver>
-    <address>172.16.2.249</address>
+    <address>10.10.10.51</address>
     <commandport>9877</commandport>
     <notificationport>9878</notificationport>
     <dataport>9879</dataport>
@@ -76,7 +78,7 @@ All flags are optional if present in the config; CLI overrides XML.
   <settings>
     <amplifierid>0</amplifierid>
     <samplingrate>1000</samplingrate>
-    <stream_name>EGI NetAmp Default</stream_name>
+    <stream_name>EGI NetAmp 51</stream_name>
     <samples_per_chunk>32</samples_per_chunk>
   </settings>
 </root>
@@ -97,7 +99,44 @@ Usage: egi_amp_cli [options]
   --samples-per-chunk arg               LSL samples per chunk
 ```
 
+## Troubleshooting
+
+### Connection Issues
+If you see `(sendCommand_return (status error))` responses:
+1. **Check Amplifier ID**: Most EGI amplifiers use ID `0`, not higher numbers
+2. **Verify Hardware**: Ensure the EGI NetAmp is powered on and connected to AmpServer
+3. **Test with Official Software**: Verify the AmpServer can connect to your amplifier first
+4. **Check Network**: Ensure the specified IP address is reachable
+
+### Stream Loss Recovery
+The application automatically attempts to reconnect up to 5 times when data streams are lost. Look for messages like:
+```
+[!] Stream lost. Attempting to reconnect (1/5)...
+[*] Reconnection attempt successful. Resuming stream...
+```
+
+### Verbose Output
+The application provides detailed initialization output showing the response to each amplifier command:
+```
+[*] Stop: (sendCommand_return (status complete))
+[*] SetPower (Off): (sendCommand_return (status complete))
+[*] SetDecimatedRate: (sendCommand_return (status complete))
+...
+```
+
+## Automated Recording Setup
+
+This repository includes a Python automation script (`LabrecorderAuto/`) that provides:
+- **Multi-Amplifier Management**: Automatically starts multiple EGI Amp Server instances
+- **Network Connectivity Checks**: Verifies amplifiers are reachable before connecting
+- **LSL Stream Validation**: Ensures streams are publishing actual data before proceeding
+- **LabRecorder Integration**: Automatically launches LabRecorder and starts recording
+- **Process Monitoring**: Monitors EGI processes and can restart them if they crash
+
+See the `LabrecorderAuto/` folder for the Python automation scripts and configuration files.
+
 ## Notes
 - For sampling rates < 1000 Hz on packet format 2, AmpServer duplicates packets to keep 1000 packets/s; duplicates are ignored by `packetCounter` logic.
 - Packet format 1 has no counter; we stream packets as they arrive.
 - This tool **only** bridges EGI → LSL. Recording to BIDS should be done with a separate LSL recorder (e.g., LabRecorder CLI) or your own pipeline.
+- **Amplifier ID**: Most EGI NetAmp devices use amplifier ID `0` regardless of their IP address or physical labeling.

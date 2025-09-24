@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iostream>
 #include <regex>
+#include <thread>
 
 using boost::asio::ip::tcp;
 namespace ip = boost::asio::ip;
@@ -50,10 +51,13 @@ void EGIClient::connect(const Config& c) {
   dataStream_.connect(ip::tcp::endpoint(ip::make_address(c.address), c.dataPort));
 
   if (!getAmplifierDetails(c.amplifierId)) {
-    throw std::runtime_error("Failed to get amplifier details.");
+    throw std::runtime_error("Failed to get amplifier details. Make sure the AmpServer is running and the amplifier is connected.");
   }
 
   initAmplifier(c.amplifierId, c.samplingRate);
+  
+  // Send listen command to start data stream
+  std::cout << "[*] Starting data stream..." << std::endl;
   sendDatastreamCommand("cmd_ListenToAmp", std::to_string(c.amplifierId), "0", "0");
 
   // notifications thread
@@ -120,12 +124,27 @@ bool EGIClient::getAmplifierDetails(int amplifierId) {
 }
 
 void EGIClient::initAmplifier(int amplifierId, int samplingRate) {
-  (void)sendCommand("cmd_Stop", std::to_string(amplifierId), "0", "0");
-  (void)sendCommand("cmd_SetPower", std::to_string(amplifierId), "0", "0");
-  (void)sendCommand("cmd_SetDecimatedRate", std::to_string(amplifierId), "0", std::to_string(samplingRate));
-  (void)sendCommand("cmd_SetPower", std::to_string(amplifierId), "0", "1");
-  (void)sendCommand("cmd_Start", std::to_string(amplifierId), "0", "0");
-  (void)sendCommand("cmd_DefaultAcquisitionState", std::to_string(amplifierId), "0", "0");
+  std::cout << "[*] Initializing amplifier..." << std::endl;
+  
+  // Follow the exact sequence from the original Qt GUI version
+  std::string stopResponse = sendCommand("cmd_Stop", std::to_string(amplifierId), "0", "0");
+  std::cout << "[*] Stop: " << stopResponse << std::endl;
+  
+  std::string setPowerOffResponse = sendCommand("cmd_SetPower", std::to_string(amplifierId), "0", "0");
+  std::cout << "[*] SetPower (Off): " << setPowerOffResponse << std::endl;
+  
+  std::string setSampleRateResponse = sendCommand("cmd_SetDecimatedRate", std::to_string(amplifierId), "0", std::to_string(samplingRate));
+  std::cout << "[*] SetDecimatedRate: " << setSampleRateResponse << std::endl;
+  
+  std::string setPowerOnResponse = sendCommand("cmd_SetPower", std::to_string(amplifierId), "0", "1");
+  std::cout << "[*] SetPower (On): " << setPowerOnResponse << std::endl;
+  
+  std::string startResponse = sendCommand("cmd_Start", std::to_string(amplifierId), "0", "0");
+  std::cout << "[*] Start: " << startResponse << std::endl;
+  
+  std::string defaultAcquisitionResponse = sendCommand("cmd_DefaultAcquisitionState", std::to_string(amplifierId), "0", "0");
+  std::cout << "[*] DefaultAcquisitionState: " << defaultAcquisitionResponse << std::endl;
+  
   std::cout << "[*] Amplifier initialized. SamplingRate=" << samplingRate << "\n";
 }
 
@@ -163,9 +182,11 @@ void EGIClient::read_packet_format_2_loop(const Config& c, const std::function<b
   int nChannels = channelCount_;
   bool firstPacketReceived = false;
   uint64_t lastPacketCounter = 0;
+  int reconnectAttempts = 0;
+  const int maxReconnectAttempts = 5;
 
   std::cout << "[*] Starting stream (format 2)..." << std::endl;
-  while (dataStream_.good()) {
+  while (dataStream_.good() || reconnectAttempts < maxReconnectAttempts) {
     AmpDataPacketHeader header{};
     dataStream_.clear();
     SET_STREAM_EXPIRES_AFTER(dataStream_, std::chrono::seconds(5));
@@ -230,8 +251,38 @@ void EGIClient::read_packet_format_2_loop(const Config& c, const std::function<b
       outlet->push_sample(samples);
     }
     if (stop_cb && stop_cb()) break;
+    
+    // If stream is not good and we haven't been asked to stop, try to reconnect
+    if (!dataStream_.good() && (!stop_cb || !stop_cb()) && reconnectAttempts < maxReconnectAttempts) {
+      std::cerr << "[!] Stream lost. Attempting to reconnect (" << (reconnectAttempts + 1) << "/" << maxReconnectAttempts << ")...\n";
+      reconnectAttempts++;
+      
+      try {
+        // Wait a bit before retrying
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        
+        // Try to reconnect the data stream
+        dataStream_.clear();
+        SET_STREAM_EXPIRES_AFTER(dataStream_, std::chrono::seconds(5));
+        dataStream_.connect(ip::tcp::endpoint(ip::make_address(c.address), c.dataPort));
+        
+        // Re-send the listen command
+        sendDatastreamCommand("cmd_ListenToAmp", std::to_string(c.amplifierId), "0", "0");
+        
+        std::cout << "[*] Reconnection attempt successful. Resuming stream...\n";
+        reconnectAttempts = 0; // Reset counter on successful reconnect
+      } catch (const std::exception& e) {
+        std::cerr << "[!] Reconnection failed: " << e.what() << "\n";
+      }
+    }
   }
-  if (!dataStream_.good() && (!stop_cb || !stop_cb())) std::cerr << "[!] Stream lost.\n";
+  if (!dataStream_.good() && (!stop_cb || !stop_cb())) {
+    if (reconnectAttempts >= maxReconnectAttempts) {
+      std::cerr << "[!] Stream lost permanently after " << maxReconnectAttempts << " reconnection attempts.\n";
+    } else {
+      std::cerr << "[!] Stream lost.\n";
+    }
+  }
 }
 
 void EGIClient::read_packet_format_1_loop(const Config& c, const std::function<bool()>& stop_cb) {
