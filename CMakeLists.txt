@@ -4,6 +4,11 @@ project(egi_amp_cli LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Define Windows target version to avoid warnings
+if(WIN32)
+  add_definitions(-D_WIN32_WINNT=0x0A00)  # Windows 10
+endif()
+
 # Use modern Boost config (disable deprecated FindBoost warnings)
 cmake_policy(SET CMP0167 NEW)
 
@@ -20,20 +25,18 @@ message(STATUS "Boost include dirs: ${Boost_INCLUDE_DIRS}")
 set(BOOST_TARGETS Boost::boost)
 
 # --- LSL ---
-find_path(LSL_INCLUDE_DIR NAMES lsl_cpp.h)
-find_library(LSL_LIBRARY NAMES lsl liblsl)
-
-if(NOT LSL_INCLUDE_DIR OR NOT LSL_LIBRARY)
-  message(FATAL_ERROR "Could not find liblsl: LSL_INCLUDE_DIR='${LSL_INCLUDE_DIR}', LSL_LIBRARY='${LSL_LIBRARY}'")
+find_package(LSL CONFIG REQUIRED)
+if(NOT LSL_FOUND)
+  message(FATAL_ERROR "Could not find liblsl")
 endif()
 
 add_library(egi_client src/EGIClient.cpp)
-target_include_directories(egi_client PUBLIC include ${LSL_INCLUDE_DIR})
-target_link_libraries(egi_client PUBLIC ${BOOST_TARGETS} ${LSL_LIBRARY})
+target_include_directories(egi_client PUBLIC include)
+target_link_libraries(egi_client PUBLIC ${BOOST_TARGETS} LSL::lsl)
 
 add_executable(egi_amp_cli src/main.cpp)
-target_include_directories(egi_amp_cli PRIVATE include ${LSL_INCLUDE_DIR})
-target_link_libraries(egi_amp_cli PRIVATE egi_client ${BOOST_TARGETS} ${LSL_LIBRARY})
+target_include_directories(egi_amp_cli PRIVATE include)
+target_link_libraries(egi_amp_cli PRIVATE egi_client ${BOOST_TARGETS} LSL::lsl)
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(egi_amp_cli PRIVATE pthread)
