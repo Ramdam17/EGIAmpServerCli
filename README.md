@@ -133,7 +133,6 @@ This repository includes a Python automation script (`LabrecorderAuto/`) that pr
 - **LabRecorder Integration**: Automatically launches LabRecorder and starts recording
 - **Process Monitoring**: Monitors EGI processes and can restart them if they crash
 
-See the `LabrecorderAuto/` folder for the Python automation scripts and configuration files.
 
 ## Notes
 - For sampling rates < 1000 Hz on packet format 2, AmpServer duplicates packets to keep 1000 packets/s; duplicates are ignored by `packetCounter` logic.
